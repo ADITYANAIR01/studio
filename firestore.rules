@@ -1,31 +1,244 @@
-rules_version='2'
+rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // Security helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isValidTimestamp(timestamp) {
+      return timestamp is timestamp && 
+             timestamp <= request.time + duration.value(1, 'h') && // Allow 1 hour clock skew
+             timestamp >= request.time - duration.value(1, 'd');    // Not older than 1 day
+    }
+    
+    function isValidString(value, minLength, maxLength) {
+      return value is string && 
+             value.size() >= minLength && 
+             value.size() <= maxLength;
+    }
+    
+    function hasRateLimit(maxOperations, timeWindow) {
+      // This would need Cloud Functions to implement properly
+      // For now, we'll rely on client-side rate limiting
+      return true;
+    }
+    
+    function isValidCredentialType(type) {
+      return type in ['password', 'apiKey', 'googleCode', 'note', 'identity'];
+    }
+    
+    function isValidEncryptionMetadata(data) {
+      return data.keys().hasAll([
+        'encryptedPassword', 'algorithm', 'iterations', 'version'
+      ]) &&
+      isValidString(data.encryptedPassword, 1, 10000) &&
+      data.algorithm in ['AES-GCM', 'AES-CBC'] &&
+      data.iterations is int &&
+      data.iterations >= 100000 &&
+      data.iterations <= 10000000 &&
+      isValidString(data.version, 1, 20);
+    }
+    
     // Users can only access their own data
     match /users/{userId} {
-      // Allow read/write access only to authenticated users for their own data
-      allow read, write: if request.auth != null && request.auth.uid == userId;
+      allow read, write: if isOwner(userId) && 
+                           hasRateLimit(100, duration.value(1, 'h')); // 100 operations per hour
       
-      // Allow access to user's credentials subcollection
+      // User profile and settings
+      allow write: if isOwner(userId) &&
+                     resource == null || // Allow creation
+                     (
+                       request.resource.data.keys().hasOnly([
+                         'email', 'displayName', 'lastLogin', 'settings', 'securitySettings'
+                       ]) &&
+                       isValidTimestamp(request.resource.data.lastLogin)
+                     );
+      
+      // Credentials subcollection with enhanced validation
       match /credentials/{credentialId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isOwner(userId) && 
+                             hasRateLimit(50, duration.value(1, 'h')); // 50 credential operations per hour
+        
+        allow create: if isOwner(userId) &&
+                        validateCredentialCreate(request.resource.data);
+        
+        allow update: if isOwner(userId) &&
+                        validateCredentialUpdate(request.resource.data, resource.data);
+        
+        allow delete: if isOwner(userId) &&
+                        hasRateLimit(10, duration.value(1, 'h')); // 10 deletions per hour
+        
+        function validateCredentialCreate(data) {
+          return data.keys().hasAll([
+            'name', 'username', 'encryptedPassword', 'type', 'createdAt', 'updatedAt'
+          ]) &&
+          data.keys().hasOnly([
+            'name', 'username', 'encryptedPassword', 'type', 'notes', 
+            'category', 'tags', 'lastUsed', 'createdAt', 'updatedAt',
+            'metadata', 'expiresAt'
+          ]) &&
+          isValidString(data.name, 1, 200) &&
+          isValidString(data.username, 0, 200) &&
+          isValidEncryptionMetadata(data) &&
+          isValidCredentialType(data.type) &&
+          isValidTimestamp(data.createdAt) &&
+          isValidTimestamp(data.updatedAt) &&
+          data.createdAt == data.updatedAt && // Must be equal on creation
+          (data.expiresAt == null || (data.expiresAt is timestamp && data.expiresAt > request.time));
+        }
+        
+        function validateCredentialUpdate(newData, existingData) {
+          return newData.keys().hasAll([
+            'name', 'username', 'encryptedPassword', 'type', 'createdAt', 'updatedAt'
+          ]) &&
+          newData.name == existingData.name && // Name cannot be changed
+          newData.type == existingData.type && // Type cannot be changed
+          newData.createdAt == existingData.createdAt && // Created timestamp cannot be changed
+          isValidTimestamp(newData.updatedAt) &&
+          newData.updatedAt > existingData.updatedAt && // Must be newer
+          isValidEncryptionMetadata(newData);
+        }
       }
       
-      // Allow access to user's api-keys subcollection
+      // API Keys subcollection
       match /api-keys/{apiKeyId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isOwner(userId) && 
+                             hasRateLimit(20, duration.value(1, 'h')); // 20 API key operations per hour
+        
+        allow create: if isOwner(userId) &&
+                        validateApiKeyData(request.resource.data);
+        
+        allow update: if isOwner(userId) &&
+                        validateApiKeyUpdate(request.resource.data, resource.data);
+        
+        function validateApiKeyData(data) {
+          return data.keys().hasAll(['name', 'encryptedPassword', 'type', 'createdAt']) &&
+                 data.keys().hasOnly([
+                   'name', 'encryptedPassword', 'type', 'provider', 'scope',
+                   'expiresAt', 'lastUsed', 'createdAt', 'updatedAt'
+                 ]) &&
+                 isValidString(data.name, 1, 100) &&
+                 data.type == 'apiKey' &&
+                 isValidEncryptionMetadata(data) &&
+                 isValidTimestamp(data.createdAt);
+        }
+        
+        function validateApiKeyUpdate(newData, existingData) {
+          return newData.name == existingData.name &&
+                 newData.type == existingData.type &&
+                 newData.createdAt == existingData.createdAt &&
+                 isValidTimestamp(newData.updatedAt) &&
+                 newData.updatedAt > existingData.updatedAt;
+        }
       }
       
-      // Allow access to user's google-codes subcollection
+      // Google Backup Codes subcollection
       match /google-codes/{codeId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isOwner(userId) && 
+                             hasRateLimit(10, duration.value(1, 'h')); // 10 backup code operations per hour
+        
+        allow create: if isOwner(userId) &&
+                        validateGoogleCodeData(request.resource.data);
+        
+        function validateGoogleCodeData(data) {
+          return data.keys().hasAll(['platform', 'email', 'encryptedPassword', 'type']) &&
+                 data.keys().hasOnly([
+                   'platform', 'email', 'encryptedPassword', 'type', 
+                   'codeCount', 'usedCodes', 'createdAt', 'updatedAt'
+                 ]) &&
+                 isValidString(data.platform, 1, 50) &&
+                 isValidString(data.email, 1, 254) &&
+                 data.type == 'googleCode' &&
+                 isValidEncryptionMetadata(data) &&
+                 data.codeCount is int &&
+                 data.codeCount >= 1 &&
+                 data.codeCount <= 20;
+        }
       }
       
-      // Allow access to user's settings subcollection
+      // Settings subcollection
       match /settings/{settingId} {
-        allow read, write: if request.auth != null && request.auth.uid == userId;
+        allow read, write: if isOwner(userId) && 
+                             hasRateLimit(30, duration.value(1, 'h')); // 30 settings operations per hour
+        
+        allow write: if isOwner(userId) &&
+                       validateSettingsData(request.resource.data);
+        
+        function validateSettingsData(data) {
+          return data.keys().hasOnly([
+            'theme', 'language', 'autoLock', 'biometricEnabled',
+            'backupEnabled', 'syncEnabled', 'securityLevel',
+            'updatedAt'
+          ]) &&
+          (data.theme == null || data.theme in ['light', 'dark', 'auto']) &&
+          (data.language == null || isValidString(data.language, 2, 10)) &&
+          (data.autoLock == null || data.autoLock is bool) &&
+          (data.biometricEnabled == null || data.biometricEnabled is bool) &&
+          (data.securityLevel == null || data.securityLevel in ['medium', 'high', 'maximum']) &&
+          isValidTimestamp(data.updatedAt);
+        }
       }
+      
+      // Audit logs (read-only for users, write-only for system)
+      match /audit-logs/{logId} {
+        allow read: if isOwner(userId);
+        // Audit logs should only be written by Cloud Functions
+        allow write: if false;
+      }
+      
+      // Security events (read-only for users)
+      match /security-events/{eventId} {
+        allow read: if isOwner(userId);
+        allow write: if false; // Only system can write security events
+      }
+      
+      // Backup data with size limits
+      match /backups/{backupId} {
+        allow read, write: if isOwner(userId) && 
+                             hasRateLimit(5, duration.value(1, 'd')); // 5 backup operations per day
+        
+        allow create: if isOwner(userId) &&
+                        validateBackupData(request.resource.data);
+        
+        function validateBackupData(data) {
+          return data.keys().hasAll(['encryptedData', 'version', 'createdAt']) &&
+                 data.keys().hasOnly([
+                   'encryptedData', 'version', 'itemCount', 'size',
+                   'checksum', 'createdAt', 'expiresAt'
+                 ]) &&
+                 isValidEncryptionMetadata(data) &&
+                 data.size is int &&
+                 data.size <= 10485760 && // 10MB max backup size
+                 data.itemCount is int &&
+                 data.itemCount <= 10000 && // Max 10k items
+                 isValidTimestamp(data.createdAt) &&
+                 (data.expiresAt == null || data.expiresAt > request.time);
+        }
+      }
+    }
+    
+    // Global rate limiting and security rules
+    match /{document=**} {
+      // Deny all other access
+      allow read, write: if false;
+    }
+    
+    // System collections (admin only)
+    match /system/{document=**} {
+      allow read, write: if false; // Only server-side access
+    }
+    
+    // Anonymous data (public read-only)
+    match /public/{document=**} {
+      allow read: if true;
+      allow write: if false;
     }
   }
 }

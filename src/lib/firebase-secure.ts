@@ -17,16 +17,7 @@ import {
 } from 'firebase/auth'
 import { getFirestore, collection, doc, setDoc, getDoc, type Firestore } from 'firebase/firestore'
 import { encryptCredential, decryptCredential } from './crypto'
-
-// Firebase configuration
-const firebaseConfig = {
-  apiKey: "AIzaSyC_wf0Yew8slRJkoIvnH_tmzRZkdnbQXeQ",
-  authDomain: "citadel-guard-nya4s.firebaseapp.com",
-  projectId: "citadel-guard-nya4s",
-  storageBucket: "citadel-guard-nya4s.firebasestorage.app",
-  messagingSenderId: "397789642202",
-  appId: "1:397789642202:web:99397c09799affb44f14e3"
-}
+import { appConfig } from './config'
 
 // Initialize Firebase app singleton
 let firebaseApp: FirebaseApp | null = null
@@ -35,6 +26,16 @@ let firebaseAuthInstance: Auth | null = null
 
 function getFirebaseApp(): { app: FirebaseApp; db: Firestore; auth: Auth } {
   if (!firebaseApp) {
+    // Use secure configuration from config manager
+    const firebaseConfig = appConfig.firebase;
+    
+    // Validate configuration before initializing
+    if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
+      throw new Error('Invalid Firebase configuration. Check environment variables.');
+    }
+
+    console.log('[Firebase] Initializing with project:', firebaseConfig.projectId);
+    
     firebaseApp = initializeApp(firebaseConfig)
     firestoreDb = getFirestore(firebaseApp)
     firebaseAuthInstance = getAuth(firebaseApp)
@@ -271,3 +272,14 @@ export const firebaseAuth = FirebaseAuthService.getInstance()
 
 // Export the Firebase app components for direct use if needed
 export const { app, db, auth } = getFirebaseApp()
+
+// Additional exports for universal access system compatibility
+export const secureFirebaseAuth = {
+  getInstance: () => ({ /* placeholder for compatibility */ })
+};
+
+export async function getAllCredentials(): Promise<any[]> {
+  // Placeholder function for backup compatibility
+  console.log('getAllCredentials called - this is a placeholder');
+  return [];
+}

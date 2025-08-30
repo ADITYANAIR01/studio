@@ -18,7 +18,7 @@ import {
   Unsubscribe
 } from 'firebase/firestore';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/firebase';
+import { db } from '@/lib/firebase-secure';
 
 export function useFirestoreCollection<T extends { id?: string }>(
   collectionName: string,

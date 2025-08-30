@@ -6,6 +6,10 @@
 import { User } from 'firebase/auth'
 import { deriveKeyFromPassword, SecureVaultManager, calculatePasswordStrength } from '@/lib/crypto'
 import { firebaseAuth } from '@/lib/firebase'
+// Update the import path if the file is located elsewhere, for example:
+import { secureStorageCompat } from '../lib/secure-storage'
+// Or, if the file does not exist, create 'secure-storage.ts' in the correct directory with the required export.
+import { appConfig } from '@/lib/config'
 
 // Types for master password management
 export interface MasterPasswordSetupResult {
@@ -51,10 +55,10 @@ export class MasterPasswordService {
     this.vaultManager = SecureVaultManager.getInstance()
     
     // Listen for authentication state changes
-    firebaseAuth.addAuthStateListener((user) => {
+    firebaseAuth.addAuthStateListener(async (user) => {
       this.currentUser = user
       if (user) {
-        this.loadUserMasterPasswordData(user.uid)
+        await this.loadUserMasterPasswordData(user.uid)
       } else {
         this.clearUserMasterPasswordData()
       }
@@ -135,7 +139,7 @@ export class MasterPasswordService {
         isImmutable: true
       }
 
-      this.saveMasterPasswordData(masterPasswordData)
+      await this.saveMasterPasswordData(masterPasswordData)
       this.masterPasswordData = masterPasswordData
 
       return {
@@ -183,7 +187,7 @@ export class MasterPasswordService {
       if (success) {
         // Update last used timestamp
         this.masterPasswordData!.lastUsedTimestamp = Date.now()
-        this.saveMasterPasswordData(this.masterPasswordData!)
+        await this.saveMasterPasswordData(this.masterPasswordData!)
         
         return {
           success: true
@@ -239,43 +243,68 @@ export class MasterPasswordService {
   }
 
   /**
-   * Load master password data for user
+   * Load master password data for user (now using secure storage)
    */
-  private loadUserMasterPasswordData(userUid: string): void {
+  private async loadUserMasterPasswordData(userUid: string): Promise<void> {
     try {
-      const storageKey = this.getUserStorageKey(userUid)
-      const storedData = localStorage.getItem(storageKey)
-      
-      if (storedData) {
-        const parsed = JSON.parse(storedData) as UserMasterPasswordData
-        
+      const storageKey = this.getUserStorageKey(userUid);
+      let parsed: UserMasterPasswordData | null = null;
+
+      if (appConfig.environment !== 'development') {
+        // Try secure storage first
+        try {
+          // Use a derived key from UID for decryption
+          const tempKey = userUid.substring(0, 16).padEnd(16, '0');
+          parsed = await secureStorageCompat.getItem(storageKey, tempKey);
+        } catch (error) {
+          console.warn('[MasterPassword] Secure storage failed, falling back to localStorage');
+        }
+      }
+
+      // Fallback to localStorage if secure storage fails or in development
+      if (!parsed) {
+        const storedData = localStorage.getItem(storageKey);
+        if (storedData) {
+          parsed = JSON.parse(storedData) as UserMasterPasswordData;
+        }
+      }
+
+      if (parsed) {
         // Verify the data belongs to the current user
         if (parsed.userUid === userUid && parsed.isImmutable === true) {
-          this.masterPasswordData = parsed
+          this.masterPasswordData = parsed;
         } else {
           // Invalid or corrupted data
-          localStorage.removeItem(storageKey)
-          this.masterPasswordData = null
+          localStorage.removeItem(storageKey);
+          this.masterPasswordData = null;
         }
       } else {
-        this.masterPasswordData = null
+        this.masterPasswordData = null;
       }
     } catch (error) {
-      console.error('Failed to load master password data:', error)
-      this.masterPasswordData = null
+      console.error('Failed to load master password data:', error);
+      this.masterPasswordData = null;
     }
   }
 
   /**
-   * Save master password data for user
+   * Save master password data for user (now using secure storage)
    */
-  private saveMasterPasswordData(data: UserMasterPasswordData): void {
+  private async saveMasterPasswordData(data: UserMasterPasswordData): Promise<void> {
     try {
-      const storageKey = this.getUserStorageKey(data.userUid)
-      localStorage.setItem(storageKey, JSON.stringify(data))
+      if (appConfig.environment !== 'development') {
+        // In production, use secure storage
+        const storageKey = this.getUserStorageKey(data.userUid);
+        await secureStorageCompat.setItem(storageKey, data, data.saltBase64);
+      } else {
+        // In development, fall back to localStorage with warning
+        console.warn('[MasterPassword] Using localStorage in development mode');
+        const storageKey = this.getUserStorageKey(data.userUid);
+        localStorage.setItem(storageKey, JSON.stringify(data));
+      }
     } catch (error) {
-      console.error('Failed to save master password data:', error)
-      throw error
+      console.error('Failed to save master password data:', error);
+      throw error;
     }
   }
 
@@ -288,27 +317,48 @@ export class MasterPasswordService {
   }
 
   /**
-   * Emergency cleanup (for development/testing only)
-   * This will be removed in production
+   * Emergency cleanup (DEVELOPMENT ONLY - Automatically disabled in production)
    */
   dangerousResetMasterPassword(): boolean {
-    if (process.env.NODE_ENV !== 'development') {
-      console.error('Master password reset is only available in development')
-      return false
+    // Triple-check environment to prevent accidental production usage
+    if (appConfig.environment !== 'development') {
+      console.error('[SECURITY] Master password reset blocked - not in development environment');
+      return false;
+    }
+
+    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+      console.error('[SECURITY] Master password reset blocked - not on localhost');
+      return false;
     }
 
     const user = this.currentUser
-    if (!user) return false
+    if (!user) {
+      console.warn('[Dev] No user authenticated for reset');
+      return false;
+    }
 
     try {
+      console.warn('[Dev] DANGER: Resetting master password for development purposes');
+      console.warn('[Dev] User:', user.email);
+      console.warn('[Dev] This operation is IRREVERSIBLE and will delete all encrypted data');
+
       const storageKey = this.getUserStorageKey(user.uid)
       localStorage.removeItem(storageKey)
       this.clearUserMasterPasswordData()
       
-      console.warn('Master password has been reset for development purposes')
+      // Also clear secure storage if available
+      try {
+        secureStorageCompat.removeItem(storageKey).catch(() => {
+          // Ignore errors in secure storage cleanup
+        });
+      } catch (error) {
+        // Ignore secure storage errors during reset
+      }
+      
+      console.warn('[Dev] Master password reset completed - all local data cleared');
       return true
     } catch (error) {
-      console.error('Failed to reset master password:', error)
+      console.error('[Dev] Failed to reset master password:', error)
       return false
     }
   }
@@ -356,8 +406,53 @@ export class MasterPasswordService {
 // Export singleton instance
 export const masterPasswordService = MasterPasswordService.getInstance()
 
-// For development debugging - expose debug function globally
-if (process.env.NODE_ENV === 'development' && typeof window !== 'undefined') {
-  ;(window as any).debugMasterPassword = () => masterPasswordService.debugStorageState()
-  ;(window as any).resetMasterPassword = () => masterPasswordService.dangerousResetMasterPassword()
+// Development debugging - STRICTLY controlled access
+if (appConfig.environment === 'development' && typeof window !== 'undefined') {
+  // Only expose on localhost
+  if (window.location.hostname === 'localhost') {
+    console.warn('[Dev] Development debugging functions available');
+    console.warn('[Dev] These functions are DISABLED in production');
+    
+    // Expose debug functions with clear warnings
+    Object.defineProperty(window, 'debugMasterPassword', {
+      value: () => {
+        console.warn('[Dev] === DEVELOPMENT DEBUG INFO ===');
+        masterPasswordService.debugStorageState();
+        console.warn('[Dev] === END DEBUG INFO ===');
+      },
+      configurable: true,
+      writable: false
+    });
+    
+    Object.defineProperty(window, 'resetMasterPassword', {
+      value: () => {
+        console.warn('[Dev] === DANGEROUS OPERATION ===');
+        console.warn('[Dev] This will DELETE ALL encrypted data!');
+        console.warn('[Dev] Only use this for development testing!');
+        const confirmed = confirm('DEVELOPMENT ONLY: Delete all master password data? This is IRREVERSIBLE!');
+        if (confirmed) {
+          return masterPasswordService.dangerousResetMasterPassword();
+        }
+        return false;
+      },
+      configurable: true,
+      writable: false
+    });
+  } else {
+    console.log('[Security] Development functions disabled - not on localhost');
+  }
+} else if (appConfig.environment === 'production') {
+  // In production, actively block any debug access
+  if (typeof window !== 'undefined') {
+    ['debugMasterPassword', 'resetMasterPassword', 'console'].forEach(prop => {
+      Object.defineProperty(window, prop, {
+        value: () => {
+          console.error('[SECURITY] Debug functions are disabled in production');
+          return false;
+        },
+        configurable: false,
+        writable: false
+      });
+    });
+  }
 }

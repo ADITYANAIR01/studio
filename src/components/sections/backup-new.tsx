@@ -9,7 +9,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Upload, Download, ShieldCheck, Database } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { encryptData, decryptData } from '@/lib/utils';
-import { SecureStorageService } from '@/services/SecureStorageService';
+import { getAllCredentials } from '@/lib/firebase-secure';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface BackupSectionProps {
   passwords?: Password[];

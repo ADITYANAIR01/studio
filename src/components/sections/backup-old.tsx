@@ -1,5 +1,8 @@
 'use client';
 
+// DEPRECATED: This component is deprecated and will be removed in a future version
+// Use backup.tsx instead which supports the new universal access system
+
 import { useRef, useState, useEffect } from 'react';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import type { AppData, Password, ApiKey, GoogleBackupCode, StoredGoogleCode } from '@/lib/types';
@@ -9,7 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Upload, Download, ShieldCheck, Database } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { encryptData, decryptData } from '@/lib/utils';
-import { SecureStorageService } from '@/services/SecureStorageService';
+// Note: This component is deprecated and should be removed after migration
 
 interface BackupSectionProps {
   passwords?: Password[];

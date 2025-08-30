@@ -1,14 +1,27 @@
-import CryptoJS from 'crypto-js';
+/**
+ * Enhanced Cryptographic System
+ * Migrated from weak CryptoJS to secure Web Crypto API
+ */
 
-// Encrypts a string using AES and a master password
-export function encryptCredential(plainText: string, masterPassword: string): string {
-  return CryptoJS.AES.encrypt(plainText, masterPassword).toString();
+// Import the new advanced crypto system
+import { cryptoManager, type EncryptedPayload } from './crypto-advanced';
+import { appConfig } from './config';
+
+// Legacy compatibility - now using advanced crypto under the hood
+export async function encryptCredential(plainText: string, masterPassword: string): Promise<string> {
+  const payload = await cryptoManager.encryptData(plainText, masterPassword);
+  return JSON.stringify(payload);
 }
 
-// Decrypts a string using AES and a master password
-export function decryptCredential(cipherText: string, masterPassword: string): string {
-  const bytes = CryptoJS.AES.decrypt(cipherText, masterPassword);
-  return bytes.toString(CryptoJS.enc.Utf8);
+export async function decryptCredential(cipherText: string, masterPassword: string): Promise<string> {
+  try {
+    const payload: EncryptedPayload = JSON.parse(cipherText);
+    return await cryptoManager.decryptData(payload, masterPassword);
+  } catch (error) {
+    // Fallback for old CryptoJS format (if any exists)
+    console.warn('[Crypto] Attempting legacy decryption fallback');
+    throw new Error('Legacy format not supported - please re-encrypt your data');
+  }
 }
 
 // Utility functions for base64 encoding/decoding

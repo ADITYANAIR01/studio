@@ -13,7 +13,7 @@ import {
   query,
   where
 } from 'firebase/firestore';
-import { db } from '@/lib/firebase';
+import { db } from '@/lib/firebase-secure';
 import type { Password, ApiKey, StoredGoogleCode } from '@/lib/types';
 
 export interface MigrationResult {

@@ -51,21 +51,64 @@ export class SecureStorageService {
    * Store encrypted password
    */
   async savePassword(password: Password): Promise<void> {
-    await this.saveItem(password, 'password');
+  throw new Error('Use savePasswordSecure(password, masterPassword) instead.');
   }
 
   /**
    * Store encrypted API key
    */
   async saveApiKey(apiKey: ApiKey): Promise<void> {
-    await this.saveItem(apiKey, 'apiKey');
+  throw new Error('Use saveApiKeySecure(apiKey, masterPassword) instead.');
   }
 
   /**
    * Store encrypted Google backup codes
    */
   async saveGoogleCode(googleCode: StoredGoogleCode): Promise<void> {
-    await this.saveItem(googleCode, 'googleCode');
+    throw new Error('Use saveGoogleCodeSecure(googleCode, masterPassword) instead.');
+  }
+
+  /**
+   * Securely save password to Firestore
+   */
+  async savePasswordSecure(password: Password, masterPassword: string): Promise<void> {
+    const { saveCredential } = await import('@/lib/firebase');
+    await saveCredential({
+      name: password.name,
+      username: password.username || password.email || '',
+      password: password.value,
+      type: 'password',
+      notes: password.category || ''
+    }, masterPassword);
+  }
+
+  /**
+   * Securely save API key to Firestore
+   */
+  async saveApiKeySecure(apiKey: ApiKey, masterPassword: string): Promise<void> {
+    const { saveCredential } = await import('@/lib/firebase');
+    await saveCredential({
+      name: apiKey.name,
+      username: '',
+      password: apiKey.value,
+      type: 'apiKey',
+      notes: ''
+    }, masterPassword);
+  }
+
+  /**
+   * Securely save Google backup codes to Firestore
+   */
+  async saveGoogleCodeSecure(googleCode: StoredGoogleCode, masterPassword: string): Promise<void> {
+    const { saveCredential } = await import('@/lib/firebase');
+    await saveCredential({
+      name: googleCode.platform,
+      username: googleCode.email,
+      password: JSON.stringify(googleCode.codes),
+      type: 'googleCode',
+      notes: ''
+    }, masterPassword);
+  }
   }
 
   /**

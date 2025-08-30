@@ -9,7 +9,8 @@ import { useToast } from '@/hooks/use-toast';
 import { Upload, Download, ShieldCheck, Database } from 'lucide-react';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { encryptData, decryptData } from '@/lib/utils';
-import { SecureStorageService } from '@/services/SecureStorageService';
+import { getAllCredentials } from '@/lib/firebase-secure';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface BackupSectionProps {
   passwords?: Password[];
@@ -25,24 +26,29 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
   const passwords = propsPasswords || localPasswords;
   const setPasswords = propsSetPasswords || setLocalPasswords;
   const [importedData, setImportedData] = useState<AppData | null>(null);
-  const [vaultStats, setVaultStats] = useState<{ totalItems: number; lastBackup?: number } | null>(null);
+  const [secureCredentials, setSecureCredentials] = useState<any[]>([]);
+  const { user } = useAuth();
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load vault statistics on component mount
+  // Load secure credentials count on component mount
   useEffect(() => {
-    const loadVaultStats = async () => {
+    const loadSecureCredentials = async () => {
+      if (!user) {
+        setSecureCredentials([]);
+        return;
+      }
+      
       try {
-        const secureStorage = SecureStorageService.getInstance();
-        const stats = await secureStorage.getVaultStats();
-        setVaultStats(stats);
+        const credentials = await getAllCredentials();
+        setSecureCredentials(credentials);
       } catch (error) {
-        // Secure vault might not be initialized
-        setVaultStats({ totalItems: 0 });
+        console.log('No secure credentials available:', error);
+        setSecureCredentials([]);
       }
     };
-    loadVaultStats();
-  }, []);
+    loadSecureCredentials();
+  }, [user]);
 
   const handleExport = async () => {
     const secret = prompt('Enter a passphrase to encrypt your backup:');
@@ -54,16 +60,14 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
       const localApiKeys = apiKeys;
       const localGoogleCodes = googleCodes;
       
-      // Get secure vault data if available
-      const secureStorage = SecureStorageService.getInstance();
-      let secureVaultData = null;
-      try {
-        const stats = await secureStorage.getVaultStats();
-        if (stats.totalItems > 0) {
-          secureVaultData = await secureStorage.exportVault();
+      // Get secure credentials if available
+      let secureCredentialsData: any[] = [];
+      if (user) {
+        try {
+          secureCredentialsData = await getAllCredentials();
+        } catch (error) {
+          console.log('No secure credentials to export');
         }
-      } catch (error) {
-        console.log('No secure vault data to export');
       }
       
       // Get application settings from localStorage
@@ -78,10 +82,10 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
         passwords: localPasswords, 
         apiKeys: localApiKeys, 
         googleCodes: localGoogleCodes,
-        secureVaultData,
+        secureCredentials: secureCredentialsData,
         settings,
         exportedAt: new Date().toISOString(),
-        version: '1.0.0'
+        version: '2.0.0'  // Updated version for new format
       };
       
       const encrypted = encryptData(JSON.stringify(appData), secret);
@@ -128,9 +132,13 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
           }
           
           setImportedData(data);
+          
+          const secureCount = data.secureCredentials?.length || 0;
+          const totalMessage = `Found ${data.passwords.length} passwords, ${data.apiKeys.length} API keys, ${data.googleCodes.length} backup codes${secureCount > 0 ? `, and ${secureCount} secure credentials` : ''}`;
+          
           toast({ 
             title: 'Backup file loaded successfully!', 
-            description: `Found ${data.passwords.length} passwords, ${data.apiKeys.length} API keys, and ${data.googleCodes.length} backup codes.` 
+            description: totalMessage
           });
         } catch (error) {
           console.error('Import error:', error);
@@ -163,18 +171,20 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
       console.log('Restoring Google codes:', importedData.googleCodes?.length || 0);
       setGoogleCodes(importedData.googleCodes || []);
       
-      // Restore secure vault data if present
-      if (importedData.secureVaultData) {
-        try {
-          console.log('Restoring secure vault data...');
-          const secureStorage = SecureStorageService.getInstance();
-          await secureStorage.importVault(importedData.secureVaultData);
-          console.log('Secure vault data restored successfully');
-        } catch (error) {
-          console.error('Failed to restore secure vault data:', error);
+      // Restore secure credentials if present
+      if (importedData.secureCredentials && importedData.secureCredentials.length > 0) {
+        if (!user) {
+          console.warn('Cannot restore secure credentials: User not authenticated');
           toast({ 
             title: 'Partial restore completed', 
-            description: 'Main data restored but secure vault data could not be imported.', 
+            description: 'Main data restored but secure credentials require authentication.', 
+            variant: 'destructive' 
+          });
+        } else {
+          console.log('Secure credentials found but import not yet implemented - new system needs this feature');
+          toast({ 
+            title: 'Partial restore completed', 
+            description: 'Main data restored. Secure credentials import will be available in a future update.', 
             variant: 'destructive' 
           });
         }
@@ -191,9 +201,12 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
       }
       
       console.log('Data restore completed successfully');
+      const secureCount = importedData.secureCredentials?.length || 0;
+      const restoredMessage = `Restored ${importedData.passwords?.length || 0} passwords, ${importedData.apiKeys?.length || 0} API keys, and ${importedData.googleCodes?.length || 0} backup codes${secureCount > 0 ? `. ${secureCount} secure credentials noted for future import` : ''}`;
+      
       toast({ 
         title: 'Data restored successfully!', 
-        description: `Restored ${importedData.passwords?.length || 0} passwords, ${importedData.apiKeys?.length || 0} API keys, and ${importedData.googleCodes?.length || 0} backup codes.` 
+        description: restoredMessage
       });
       
       setImportedData(null);
@@ -239,7 +252,7 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
                   <div className="text-sm text-muted-foreground">Backup Codes</div>
                 </div>
                 <div>
-                  <div className="text-2xl font-bold text-orange-600">{vaultStats?.totalItems || 0}</div>
+                  <div className="text-2xl font-bold text-orange-600">{secureCredentials.length}</div>
                   <div className="text-sm text-muted-foreground">Secure Items</div>
                 </div>
               </div>
@@ -254,7 +267,7 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
                 </CardHeader>
                 <CardContent>
                     <p className="text-sm text-muted-foreground mb-4">
-                        Create a complete backup of all your passwords, API keys, backup codes, secure vault data, and application settings. This encrypted backup contains everything needed to fully restore your account.
+                        Create a complete backup of all your passwords, API keys, backup codes, secure credentials, and application settings. This encrypted backup contains everything needed to restore your data.
                     </p>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -285,7 +298,7 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
                 </CardHeader>
                 <CardContent>
                     <p className="text-sm text-muted-foreground mb-4">
-                        Restore your complete data from a previously exported backup file. This will restore passwords, API keys, backup codes, secure vault data, and settings. Current data will be overwritten.
+                        Restore your complete data from a previously exported backup file. This will restore passwords, API keys, backup codes, and settings. Current data will be overwritten.
                     </p>
                     <input type="file" ref={fileInputRef} onChange={handleFileImport} className="hidden" />
                     <Button variant="outline" onClick={triggerFileImport}>
@@ -302,7 +315,7 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
           <AlertDialogHeader>
             <AlertDialogTitle>Overwrite all existing data?</AlertDialogTitle>
             <AlertDialogDescription>
-              This action cannot be undone. Importing a backup will replace all passwords, API keys, backup codes, secure vault data, and application settings currently stored in the application.
+              This action cannot be undone. Importing a backup will replace all passwords, API keys, backup codes, and application settings currently stored in the application.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
