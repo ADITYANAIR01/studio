@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState, useEffect } from 'react';
+import { SecureStorageService } from '@/services/SecureStorageService';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import type { AppData, Password, ApiKey, StoredGoogleCode } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -27,6 +28,7 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
   const setPasswords = propsSetPasswords || setLocalPasswords;
   const [importedData, setImportedData] = useState<AppData | null>(null);
   const [vaultStats, setVaultStats] = useState<{ totalItems: number; lastBackup?: number } | null>(null);
+  // Provide stable reference in case SecureStorageService missing at runtime
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 

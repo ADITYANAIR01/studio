@@ -6,6 +6,9 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { signInWithEmail, signUpWithEmail, signOutUser } from '@/lib/firebase';
+import { MasterPasswordService } from '@/services/MasterPasswordService';
+import { SecureVaultManager } from '@/lib/crypto';
 
 // Basic authentication types
 export interface AuthState {
@@ -23,10 +26,14 @@ export interface AuthActions {
   // Authentication
   signIn: (email: string, password: string, masterPassword: string) => Promise<void>;
   signOut: () => Promise<void>;
+  // Legacy name used in some components
+  logout: () => Promise<void>;
   
   // Vault management
   lockVault: () => void;
   checkVaultStatus: () => boolean;
+  unlockVault: (masterPassword: string) => Promise<boolean>;
+  requiresMasterPasswordSetup: () => boolean;
   
   // Error handling
   clearError: () => void;
@@ -57,19 +64,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }, 1000);
   }, []);
 
+  const masterPasswordServiceRef = React.useRef<MasterPasswordService | null>(null);
+  if (!masterPasswordServiceRef.current && typeof window !== 'undefined') {
+    masterPasswordServiceRef.current = MasterPasswordService.getInstance();
+  }
+
   const registerUser = async (email: string, password: string, masterPassword: string): Promise<void> => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
     try {
-      // TODO: Implement actual registration with firebase-secure
-      console.log('Registration placeholder:', { email, password: '***', masterPassword: '***' });
-      
-      // Simulate successful registration
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      const cred = await signUpWithEmail(email, password);
+      // Setup master password (one-time)
+      await masterPasswordServiceRef.current?.setupMasterPassword(masterPassword);
       setState(prev => ({
         ...prev,
-        user: { email, uid: 'simulated-uid' },
+        user: cred.user,
         isAuthenticated: true,
         isVaultUnlocked: true,
         isLoading: false
@@ -86,17 +94,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const signIn = async (email: string, password: string, masterPassword: string): Promise<void> => {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
-    
     try {
-      // TODO: Implement actual sign-in with firebase-secure
-      console.log('Sign-in placeholder:', { email, password: '***', masterPassword: '***' });
-      
-      // Simulate successful sign-in
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      const cred = await signInWithEmail(email, password);
+      // Unlock vault using provided master password
+      const unlocked = await SecureVaultManager.getInstance().unlockVault(masterPassword);
+      if (!unlocked) {
+        throw new Error('Failed to unlock vault with provided master password');
+      }
       setState(prev => ({
         ...prev,
-        user: { email, uid: 'simulated-uid' },
+        user: cred.user,
         isAuthenticated: true,
         isVaultUnlocked: true,
         isLoading: false
@@ -113,11 +120,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
   const signOut = async (): Promise<void> => {
     setState(prev => ({ ...prev, isLoading: true }));
-    
     try {
-      // TODO: Implement actual sign-out
-      console.log('Sign-out placeholder');
-      
+      await signOutUser();
+      SecureVaultManager.getInstance().lockVault();
       setState({
         user: null,
         isAuthenticated: false,
@@ -136,11 +141,35 @@ export function AuthProvider({ children }: AuthProviderProps) {
   };
 
   const lockVault = (): void => {
+    SecureVaultManager.getInstance().lockVault();
     setState(prev => ({ ...prev, isVaultUnlocked: false }));
   };
 
   const checkVaultStatus = (): boolean => {
     return state.isVaultUnlocked;
+  };
+
+  const unlockVault = async (masterPassword: string): Promise<boolean> => {
+    try {
+      const result = await masterPasswordServiceRef.current?.unlockVault(masterPassword);
+      if (result?.success) {
+        setState(prev => ({ ...prev, isVaultUnlocked: true }));
+        return true;
+      }
+      if (result?.requiresSetup) {
+        setState(prev => ({ ...prev, error: 'Master password setup required' }));
+      } else if (result?.error) {
+        setState(prev => ({ ...prev, error: result.error || null }));
+      }
+      return false;
+    } catch (e) {
+      setState(prev => ({ ...prev, error: 'Vault unlock failed' }));
+      return false;
+    }
+  };
+
+  const requiresMasterPasswordSetup = (): boolean => {
+    return masterPasswordServiceRef.current?.requiresMasterPasswordSetup() || false;
   };
 
   const clearError = (): void => {
@@ -152,14 +181,18 @@ export function AuthProvider({ children }: AuthProviderProps) {
     registerUser,
     signIn,
     signOut,
+  logout: signOut,
     lockVault,
     checkVaultStatus,
+  unlockVault,
+  requiresMasterPasswordSetup,
     clearError
   };
 
   return (
     <AuthContext.Provider value={contextValue}>
-      {children}
+  {/* Ensure multiple direct children get stable implicit keys to avoid React key warnings */}
+  {React.Children.toArray(children)}
     </AuthContext.Provider>
   );
 }

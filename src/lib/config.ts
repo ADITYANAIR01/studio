@@ -134,13 +134,32 @@ class ConfigManager {
    * Load configuration from environment variables
    */
   private loadConfiguration(): AppConfig {
+    // Determine environment early
+    const environment = (process.env.NEXT_PUBLIC_APP_ENV || process.env.NODE_ENV || 'development') as AppConfig['environment'];
+
+    // Helper to optionally be lenient in non-production
+    const allowMissing = environment !== 'production';
+    const missing: string[] = [];
+
+    const safeGet = (name: string) => {
+      const v = process.env[name];
+      if (!v) {
+        if (allowMissing) {
+          missing.push(name);
+          return '';
+        }
+        return this.getRequiredEnvVar(name); // will throw
+      }
+      return v;
+    };
+
     const firebase: FirebaseConfig = {
-      apiKey: this.getRequiredEnvVar('NEXT_PUBLIC_FIREBASE_API_KEY'),
-      authDomain: this.getRequiredEnvVar('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'),
-      projectId: this.getRequiredEnvVar('NEXT_PUBLIC_FIREBASE_PROJECT_ID'),
-      storageBucket: this.getRequiredEnvVar('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET'),
-      messagingSenderId: this.getRequiredEnvVar('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID'),
-      appId: this.getRequiredEnvVar('NEXT_PUBLIC_FIREBASE_APP_ID')
+      apiKey: safeGet('NEXT_PUBLIC_FIREBASE_API_KEY'),
+      authDomain: safeGet('NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN'),
+      projectId: safeGet('NEXT_PUBLIC_FIREBASE_PROJECT_ID'),
+      storageBucket: safeGet('NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET'),
+      messagingSenderId: safeGet('NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID'),
+      appId: safeGet('NEXT_PUBLIC_FIREBASE_APP_ID')
     };
 
     const security: SecurityConfig = {
@@ -153,14 +172,19 @@ class ConfigManager {
       enableSecurityHeaders: process.env.NEXT_PUBLIC_ENABLE_SECURITY_HEADERS === 'true'
     };
 
-    const environment = (process.env.NEXT_PUBLIC_APP_ENV || 'development') as AppConfig['environment'];
-
-    return {
+    const config: AppConfig = {
       firebase,
       security,
       environment,
       version: process.env.npm_package_version || '1.0.0'
     };
+
+    if (missing.length) {
+      console.warn('[Config] Missing environment variables (development fallback in use):', missing);
+      console.warn('[Config] Firebase features will be disabled until you provide the above in .env.local');
+    }
+
+    return config;
   }
 
   /**

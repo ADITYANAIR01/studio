@@ -28,6 +28,8 @@ export interface AppData {
   googleCodes: StoredGoogleCode[];
   // Secure credentials from new system
   secureCredentials?: any[];
+  // Full encrypted vault export (stringified) from SecureStorageService
+  secureVaultData?: string | null;
   // Application settings and preferences
   settings?: any;
   // Export metadata

@@ -7,6 +7,7 @@ import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User,
@@ -17,39 +18,60 @@ import {
 } from 'firebase/auth'
 import { getFirestore, collection, doc, setDoc, getDoc, type Firestore } from 'firebase/firestore'
 import { encryptCredential, decryptCredential } from './crypto'
-import { appConfig } from './config'
+// Using user-provided static Firebase config (replaces env-based appConfig.firebase)
+const firebaseConfig = {
+  apiKey: 'AIzaSyC_wf0Yew8slRJkoIvnH_tmzRZkdnbQXeQ',
+  authDomain: 'citadel-guard-nya4s.firebaseapp.com',
+  projectId: 'citadel-guard-nya4s',
+  storageBucket: 'citadel-guard-nya4s.firebasestorage.app',
+  messagingSenderId: '397789642202',
+  appId: '1:397789642202:web:99397c09799affb44f14e3'
+};
 
 // Initialize Firebase app singleton
 let firebaseApp: FirebaseApp | null = null
 let firestoreDb: Firestore | null = null
 let firebaseAuthInstance: Auth | null = null
+let firebaseDisabled = false; // set true if config invalid (dev fallback)
 
-function getFirebaseApp(): { app: FirebaseApp; db: Firestore; auth: Auth } {
-  if (!firebaseApp) {
-    // Use secure configuration from config manager
-    const firebaseConfig = appConfig.firebase;
-    
-    // Validate configuration before initializing
-    if (!firebaseConfig.apiKey || !firebaseConfig.projectId) {
-      throw new Error('Invalid Firebase configuration. Check environment variables.');
+function isValidFirebaseConfig(cfg: { apiKey: string; projectId: string; authDomain: string; appId: string }): boolean {
+  if (!cfg.apiKey || !cfg.projectId || !cfg.authDomain || !cfg.appId) return false;
+  if (!cfg.apiKey.startsWith('AIza')) return false;
+  if (!cfg.authDomain.endsWith('.firebaseapp.com')) return false;
+  if (!cfg.appId.includes(':') || !cfg.appId.includes('web:')) return false;
+  return true;
+}
+
+function getFirebaseApp(): { app: FirebaseApp | null; db: Firestore | null; auth: Auth | null } {
+  if (!firebaseApp && !firebaseDisabled) {
+  const valid = isValidFirebaseConfig(firebaseConfig);
+    if (!valid) {
+      if (process.env.NODE_ENV === 'production') {
+        throw new Error('Invalid Firebase configuration. Check environment variables.');
+      } else {
+        firebaseDisabled = true;
+        console.warn('[Firebase] Disabled - missing or invalid config. Set NEXT_PUBLIC_FIREBASE_* vars in .env.local to enable.');
+        return { app: null, db: null, auth: null };
+      }
     }
-
     console.log('[Firebase] Initializing with project:', firebaseConfig.projectId);
-    
-    firebaseApp = initializeApp(firebaseConfig)
-    firestoreDb = getFirestore(firebaseApp)
-    firebaseAuthInstance = getAuth(firebaseApp)
+    firebaseApp = initializeApp(firebaseConfig);
+    firestoreDb = getFirestore(firebaseApp);
+    firebaseAuthInstance = getAuth(firebaseApp);
   }
-  return { 
-    app: firebaseApp, 
-    db: firestoreDb as Firestore, 
-    auth: firebaseAuthInstance as Auth 
-  }
+  return { app: firebaseApp, db: firestoreDb, auth: firebaseAuthInstance };
+}
+
+export function isFirebaseEnabled(): boolean {
+  return !firebaseDisabled && !!firebaseApp;
 }
 
 // Save encrypted credential for current user
 export async function saveCredential(credential: { name: string; username: string; password: string; type?: string; notes?: string }, masterPassword: string) {
-  const { auth, db } = getFirebaseApp()
+  const { auth, db } = getFirebaseApp();
+  if (firebaseDisabled || !auth || !db) {
+    throw new Error('Firebase is disabled (missing configuration).');
+  }
   const user = auth.currentUser
   if (!user) throw new Error('User not authenticated')
   
@@ -69,7 +91,10 @@ export async function saveCredential(credential: { name: string; username: strin
 
 // Retrieve and decrypt credential for current user
 export async function getCredential(credentialId: string, masterPassword: string) {
-  const { auth, db } = getFirebaseApp()
+  const { auth, db } = getFirebaseApp();
+  if (firebaseDisabled || !auth || !db) {
+    throw new Error('Firebase is disabled (missing configuration).');
+  }
   const user = auth.currentUser
   if (!user) throw new Error('User not authenticated')
   
@@ -88,12 +113,24 @@ export async function getCredential(credentialId: string, masterPassword: string
 }
 
 export async function signInWithEmail(email: string, password: string): Promise<UserCredential> {
-  const { auth } = getFirebaseApp()
+  const { auth } = getFirebaseApp();
+  if (firebaseDisabled || !auth) {
+    throw new Error('Firebase auth disabled (missing configuration).');
+  }
   return await signInWithEmailAndPassword(auth, email, password)
 }
 
+export async function signUpWithEmail(email: string, password: string): Promise<UserCredential> {
+  const { auth } = getFirebaseApp();
+  if (firebaseDisabled || !auth) {
+    throw new Error('Firebase auth disabled (missing configuration).');
+  }
+  return await createUserWithEmailAndPassword(auth, email, password);
+}
+
 export async function signOutUser(): Promise<void> {
-  const { auth } = getFirebaseApp()
+  const { auth } = getFirebaseApp();
+  if (firebaseDisabled || !auth) return; // nothing to do
   return await signOut(auth)
 }
 
@@ -130,11 +167,15 @@ export class FirebaseAuthService {
 
   constructor() {
     // Listen for authentication state changes
-    const { auth } = getFirebaseApp()
-    onAuthStateChanged(auth, (user) => {
-      this.currentUser = user
-      this.notifyAuthStateListeners(user)
-    })
+    const { auth } = getFirebaseApp();
+    if (!auth) {
+      console.warn('[FirebaseAuthService] Auth listener not attached (firebase disabled).');
+    } else {
+      onAuthStateChanged(auth, (user) => {
+        this.currentUser = user
+        this.notifyAuthStateListeners(user)
+      })
+    }
   }
 
   /**
@@ -142,7 +183,10 @@ export class FirebaseAuthService {
    */
   async signIn(email: string, password: string): Promise<AuthResult> {
     try {
-      const { auth } = getFirebaseApp()
+      const { auth } = getFirebaseApp();
+      if (!auth) {
+        return { success: false, error: 'Firebase disabled - cannot sign in' };
+      }
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
       return {
         success: true,
@@ -161,8 +205,10 @@ export class FirebaseAuthService {
    */
   async signOut(): Promise<AuthResult> {
     try {
-      const { auth } = getFirebaseApp()
-      await signOut(auth)
+      const { auth } = getFirebaseApp();
+      if (auth) {
+        await signOut(auth)
+      }
       return { success: true }
     } catch (error) {
       return {
@@ -207,7 +253,11 @@ export class FirebaseAuthService {
    */
   waitForAuthState(): Promise<User | null> {
     return new Promise((resolve) => {
-      const { auth } = getFirebaseApp()
+      const { auth } = getFirebaseApp();
+      if (!auth) {
+        resolve(null);
+        return;
+      }
       const unsubscribe = onAuthStateChanged(auth, (user) => {
         unsubscribe()
         resolve(user)
@@ -271,7 +321,10 @@ export class FirebaseAuthService {
 export const firebaseAuth = FirebaseAuthService.getInstance()
 
 // Export the Firebase app components for direct use if needed
-export const { app, db, auth } = getFirebaseApp()
+const core = getFirebaseApp();
+export const app = core.app as FirebaseApp | null;
+export const db = core.db as Firestore | null;
+export const auth = core.auth as Auth | null;
 
 // Additional exports for universal access system compatibility
 export const secureFirebaseAuth = {

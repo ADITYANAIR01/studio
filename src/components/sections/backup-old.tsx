@@ -4,6 +4,7 @@
 // Use backup.tsx instead which supports the new universal access system
 
 import { useRef, useState, useEffect } from 'react';
+import { SecureStorageService } from '@/services/SecureStorageService';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import type { AppData, Password, ApiKey, GoogleBackupCode, StoredGoogleCode } from '@/lib/types';
 import { Button } from '@/components/ui/button';
@@ -29,6 +30,22 @@ export default function BackupSection({ passwords: propsPasswords, setPasswords:
   const setPasswords = propsSetPasswords || setLocalPasswords;
   const [importedData, setImportedData] = useState<AppData | null>(null);
   const [vaultStats, setVaultStats] = useState<{ totalItems: number; lastBackup?: number } | null>(null);
+  // State for viewing backup codes (was missing causing TS errors)
+  const [selectedEmail, setSelectedEmail] = useState<string | null>(null);
+  const [usedCodes, setUsedCodes] = useState<Record<string, Set<string>>>({});
+  const codesForSelectedEmail = selectedEmail
+    ? googleCodes.filter(c => c.email === selectedEmail)
+    : [];
+  const handleCopyCode = (email: string, code: string) => {
+    navigator.clipboard.writeText(code).then(() => {
+      setUsedCodes(prev => {
+        const set = new Set(prev[email] || []);
+        set.add(code);
+        return { ...prev, [email]: set };
+      });
+      toast({ title: 'Code copied', description: code });
+    });
+  };
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 

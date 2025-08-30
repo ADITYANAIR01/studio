@@ -109,7 +109,7 @@ export class SecureStorageService {
       notes: ''
     }, masterPassword);
   }
-  }
+
 
   /**
    * Retrieve and decrypt passwords
