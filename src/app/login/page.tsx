@@ -13,13 +13,12 @@ import { CitadelGuardLogo } from '@/components/icons';
 const LoginPage = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [isRegistering, setIsRegistering] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   
   const router = useRouter();
   
-  const { user, signIn, signUp, loading, error } = useAuth();
+  const { user, signIn, loading, error } = useAuth();
 
   useEffect(() => {
     setMounted(true);
@@ -51,13 +50,6 @@ const LoginPage = () => {
       router.push('/');
     }
   }, [mounted, user, router]);
-
-  const toggleMode = () => {
-    setIsRegistering(!isRegistering);
-    // Clear fields when switching between login and register
-    setEmail('');
-    setPassword('');
-  };
 
   // Clean up form data when component unmounts
   useEffect(() => {
@@ -100,14 +92,12 @@ const LoginPage = () => {
     setIsSubmitting(true);
     
     try {
-      console.log(`Attempting to ${isRegistering ? 'register' : 'login'} with:`, email);
+      console.log('Attempting to login with:', email);
       
-      const result = isRegistering 
-        ? await signUp(email, password)
-        : await signIn(email, password);
+      const result = await signIn(email, password);
       
       if (result) {
-        console.log(`${isRegistering ? 'Registration' : 'Login'} successful, redirecting...`);
+        console.log('Login successful, redirecting...');
         
         // Clear sensitive data immediately
         setEmail('');
@@ -115,10 +105,10 @@ const LoginPage = () => {
         
         router.push('/');
       } else {
-        console.error(`${isRegistering ? 'Registration' : 'Login'} failed`);
+        console.error('Login failed');
       }
     } catch (err) {
-      console.error(`${isRegistering ? 'Registration' : 'Login'} error:`, err);
+      console.error('Login error:', err);
     } finally {
       setIsSubmitting(false);
     }
@@ -150,12 +140,9 @@ const LoginPage = () => {
 
         <Card>
           <CardHeader>
-            <CardTitle>{isRegistering ? 'Create Account' : 'Sign In'}</CardTitle>
+            <CardTitle>Sign In</CardTitle>
             <CardDescription>
-              {isRegistering 
-                ? 'Create a new account to get started with Citadel Guard'
-                : 'Enter your credentials to access your secure vault'
-              }
+              Enter your credentials to access your secure vault
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -213,26 +200,9 @@ const LoginPage = () => {
                 className="w-full" 
                 disabled={loading || isSubmitting}
               >
-                {isSubmitting 
-                  ? `${isRegistering ? 'Creating Account...' : 'Signing In...'}`
-                  : `${isRegistering ? 'Create Account' : 'Sign In'}`
-                }
+                {isSubmitting ? 'Signing In...' : 'Sign In'}
               </Button>
             </form>
-
-            <div className="text-center">
-              <Button
-                variant="link"
-                onClick={toggleMode}
-                disabled={loading || isSubmitting}
-                className="text-sm"
-              >
-                {isRegistering 
-                  ? 'Already have an account? Sign in'
-                  : "Don't have an account? Create one"
-                }
-              </Button>
-            </div>
           </CardContent>
         </Card>
 

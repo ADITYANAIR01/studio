@@ -3,19 +3,20 @@
  * Handles email authentication and user management
  */
 
-import { initializeApp } from 'firebase/app'
+import { initializeApp, type FirebaseApp } from 'firebase/app'
 import { 
   getAuth, 
   signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
   signOut,
   onAuthStateChanged,
   User,
   AuthError,
-  sendPasswordResetEmail,
   updateProfile,
-  UserCredential
+  UserCredential,
+  type Auth
 } from 'firebase/auth'
+import { getFirestore, collection, doc, setDoc, getDoc, type Firestore } from 'firebase/firestore'
+import { encryptCredential, decryptCredential } from './crypto'
 
 // Firebase configuration
 const firebaseConfig = {
@@ -27,21 +28,72 @@ const firebaseConfig = {
   appId: "1:397789642202:web:99397c09799affb44f14e3"
 }
 
-// Initialize Firebase
-const app = initializeApp(firebaseConfig)
-export const auth = getAuth(app)
+// Initialize Firebase app singleton
+let firebaseApp: FirebaseApp | null = null
+let firestoreDb: Firestore | null = null
+let firebaseAuthInstance: Auth | null = null
 
-// Legacy functions for backward compatibility
-export async function signUpWithEmail(email: string, password: string): Promise<UserCredential> {
-  return await createUserWithEmailAndPassword(auth, email, password);
+function getFirebaseApp(): { app: FirebaseApp; db: Firestore; auth: Auth } {
+  if (!firebaseApp) {
+    firebaseApp = initializeApp(firebaseConfig)
+    firestoreDb = getFirestore(firebaseApp)
+    firebaseAuthInstance = getAuth(firebaseApp)
+  }
+  return { 
+    app: firebaseApp, 
+    db: firestoreDb as Firestore, 
+    auth: firebaseAuthInstance as Auth 
+  }
+}
+
+// Save encrypted credential for current user
+export async function saveCredential(credential: { name: string; username: string; password: string; type?: string; notes?: string }, masterPassword: string) {
+  const { auth, db } = getFirebaseApp()
+  const user = auth.currentUser
+  if (!user) throw new Error('User not authenticated')
+  
+  const encryptedPassword = encryptCredential(credential.password, masterPassword)
+  const credentialData = {
+    name: credential.name,
+    username: credential.username,
+    encryptedPassword,
+    type: credential.type || '',
+    notes: credential.notes || ''
+  }
+  
+  const credRef = doc(collection(doc(collection(db, 'users'), user.uid), 'credentials'))
+  await setDoc(credRef, credentialData)
+  return credRef.id
+}
+
+// Retrieve and decrypt credential for current user
+export async function getCredential(credentialId: string, masterPassword: string) {
+  const { auth, db } = getFirebaseApp()
+  const user = auth.currentUser
+  if (!user) throw new Error('User not authenticated')
+  
+  const credRef = doc(collection(doc(collection(db, 'users'), user.uid), 'credentials'), credentialId)
+  const credSnap = await getDoc(credRef)
+  if (!credSnap.exists()) throw new Error('Credential not found')
+  
+  const data = credSnap.data()
+  return {
+    name: data.name,
+    username: data.username,
+    password: decryptCredential(data.encryptedPassword, masterPassword),
+    type: data.type,
+    notes: data.notes
+  }
 }
 
 export async function signInWithEmail(email: string, password: string): Promise<UserCredential> {
-  return await signInWithEmailAndPassword(auth, email, password);
+  const { auth } = getFirebaseApp()
+  return await signInWithEmailAndPassword(auth, email, password)
 }
 
 export async function signOutUser(): Promise<void> {
-  return await signOut(auth);
+  const { auth } = getFirebaseApp()
+  return await signOut(auth)
 }
 
 // Types for authentication
@@ -77,6 +129,7 @@ export class FirebaseAuthService {
 
   constructor() {
     // Listen for authentication state changes
+    const { auth } = getFirebaseApp()
     onAuthStateChanged(auth, (user) => {
       this.currentUser = user
       this.notifyAuthStateListeners(user)
@@ -84,35 +137,11 @@ export class FirebaseAuthService {
   }
 
   /**
-   * Sign up with email and password
-   */
-  async signUp(email: string, password: string, displayName?: string): Promise<AuthResult> {
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password)
-      const user = userCredential.user
-
-      // Update profile if display name provided
-      if (displayName) {
-        await updateProfile(user, { displayName })
-      }
-
-      return {
-        success: true,
-        user: user
-      }
-    } catch (error) {
-      return {
-        success: false,
-        error: this.handleAuthError(error as AuthError)
-      }
-    }
-  }
-
-  /**
    * Sign in with email and password
    */
   async signIn(email: string, password: string): Promise<AuthResult> {
     try {
+      const { auth } = getFirebaseApp()
       const userCredential = await signInWithEmailAndPassword(auth, email, password)
       return {
         success: true,
@@ -131,22 +160,8 @@ export class FirebaseAuthService {
    */
   async signOut(): Promise<AuthResult> {
     try {
+      const { auth } = getFirebaseApp()
       await signOut(auth)
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: this.handleAuthError(error as AuthError)
-      }
-    }
-  }
-
-  /**
-   * Send password reset email
-   */
-  async resetPassword(email: string): Promise<AuthResult> {
-    try {
-      await sendPasswordResetEmail(auth, email)
       return { success: true }
     } catch (error) {
       return {
@@ -191,6 +206,7 @@ export class FirebaseAuthService {
    */
   waitForAuthState(): Promise<User | null> {
     return new Promise((resolve) => {
+      const { auth } = getFirebaseApp()
       const unsubscribe = onAuthStateChanged(auth, (user) => {
         unsubscribe()
         resolve(user)
@@ -252,3 +268,6 @@ export class FirebaseAuthService {
 
 // Export singleton instance
 export const firebaseAuth = FirebaseAuthService.getInstance()
+
+// Export the Firebase app components for direct use if needed
+export const { app, db, auth } = getFirebaseApp()

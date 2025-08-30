@@ -34,9 +34,11 @@ import AddPasswordSection from '@/components/sections/add-password';
 import ApiKeysSection from '@/components/sections/api-keys';
 import CodesSection from '@/components/sections/codes';
 import BackupSection from '@/components/sections/backup';
+import DataMigrationSection from '@/components/sections/data-migration';
 import { CitadelGuardLogo } from '@/components/icons';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
+import { useFirestoreCollection } from '@/hooks/use-firestore';
 import { useLocalStorage } from '@/hooks/use-local-storage';
 import { useHotkeys } from '@/hooks/use-hotkeys';
 import { useAuth } from '@/contexts/AuthContext';
@@ -51,7 +53,11 @@ interface AppLayoutProps {
 export function AppLayout({ activeView, setActiveView }: AppLayoutProps) {
   const { setTheme, theme } = useTheme();
   const [mounted, setMounted] = useState(false);
-  const [passwords, setPasswords] = useLocalStorage<Password[]>('citadel-passwords', []);
+  
+  // Use Firestore for passwords, fallback to localStorage for migration
+  const [passwords, setPasswords, passwordsLoading] = useFirestoreCollection<Password>('credentials', []);
+  const [localPasswords, setLocalPasswords] = useLocalStorage<Password[]>('citadel-passwords', []);
+  
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
   
   const { user, logout, lockVault } = useAuth();
@@ -64,37 +70,45 @@ export function AppLayout({ activeView, setActiveView }: AppLayoutProps) {
   }, []);
 
   const menuItems = [
-    { id: 'add-password', label: 'Add Password', shortcut: 'Ctrl + Alt + N' },
-    { id: 'passwords', label: 'View Passwords', shortcut: 'Ctrl + Alt + V' },
-    { id: 'api-keys', label: 'AI Credentials', shortcut: 'Ctrl + Alt + C' },
-    { id: 'codes', label: 'CODES', shortcut: 'Ctrl + Alt + B' },
-    { id: 'backup', label: 'Backup & Restore', shortcut: 'Ctrl + Alt + R' },
+  { id: 'add-password', label: 'Add Password', shortcut: 'Ctrl + Alt + N' },
+  { id: 'passwords', label: 'View Passwords', shortcut: 'Ctrl + Alt + V' },
+  { id: 'api-keys', label: 'AI Credentials', shortcut: 'Ctrl + Alt + C' },
+  { id: 'codes', label: 'CODES', shortcut: 'Ctrl + Alt + B' },
+  { id: 'backup', label: 'Backup & Restore', shortcut: 'Ctrl + Alt + R' },
+  { id: 'migration', label: 'Cloud Migration', shortcut: 'Ctrl + Alt + M' },
   ];
 
   useHotkeys([
-    ['?', () => setIsShortcutDialogOpen(true)],
-    ['ctrl+alt+n', () => setActiveView('add-password')],
-    ['ctrl+alt+v', () => setActiveView('passwords')],
-    ['ctrl+alt+c', () => setActiveView('api-keys')],
-    ['ctrl+alt+b', () => setActiveView('codes')],
-    ['ctrl+alt+r', () => setActiveView('backup')],
-    ['ctrl+alt+l', () => lockVault()], // Quick lock vault
+  ['?', () => setIsShortcutDialogOpen(true)],
+  ['ctrl+alt+n', () => setActiveView('add-password')],
+  ['ctrl+alt+v', () => setActiveView('passwords')],
+  ['ctrl+alt+c', () => setActiveView('api-keys')],
+  ['ctrl+alt+b', () => setActiveView('codes')],
+  ['ctrl+alt+r', () => setActiveView('backup')],
+  ['ctrl+alt+m', () => setActiveView('migration')],
+  ['ctrl+alt+l', () => lockVault()], // Quick lock vault
   ]);
 
   const renderActiveView = () => {
+    // Determine which password data to use (Firestore preferred, localStorage as fallback)
+    const effectivePasswords = user && passwords.length > 0 ? passwords : localPasswords;
+    const effectiveSetPasswords = user && !passwordsLoading ? setPasswords : setLocalPasswords;
+
     switch (activeView) {
       case 'passwords':
-        return <PasswordsSection passwords={passwords} setPasswords={setPasswords} />;
+        return <PasswordsSection passwords={effectivePasswords} setPasswords={effectiveSetPasswords} />;
       case 'add-password':
-        return <AddPasswordSection passwords={passwords} setPasswords={setPasswords} setActiveView={setActiveView} />;
+        return <AddPasswordSection passwords={effectivePasswords} setPasswords={effectiveSetPasswords} setActiveView={setActiveView} />;
       case 'api-keys':
         return <ApiKeysSection />;
       case 'codes':
         return <CodesSection />;
       case 'backup':
-        return <BackupSection passwords={passwords} setPasswords={setPasswords} />;
+        return <BackupSection passwords={effectivePasswords} setPasswords={effectiveSetPasswords} />;
+      case 'migration':
+        return <DataMigrationSection />;
       default:
-        return <AddPasswordSection passwords={passwords} setPasswords={setPasswords} setActiveView={setActiveView} />;
+        return <AddPasswordSection passwords={effectivePasswords} setPasswords={effectiveSetPasswords} setActiveView={setActiveView} />;
     }
   };
 

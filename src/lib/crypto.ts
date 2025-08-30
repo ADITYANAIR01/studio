@@ -1,3 +1,17 @@
+import CryptoJS from 'crypto-js';
+
+// Encrypts a string using AES and a master password
+export function encryptCredential(plainText: string, masterPassword: string): string {
+  return CryptoJS.AES.encrypt(plainText, masterPassword).toString();
+}
+
+// Decrypts a string using AES and a master password
+export function decryptCredential(cipherText: string, masterPassword: string): string {
+  const bytes = CryptoJS.AES.decrypt(cipherText, masterPassword);
+  return bytes.toString(CryptoJS.enc.Utf8);
+}
+
+// Utility functions for base64 encoding/decoding
 /**
  * Secure cryptographic utilities for zero-knowledge password manager
  * Implements PBKDF2 key derivation and AES-GCM encryption
